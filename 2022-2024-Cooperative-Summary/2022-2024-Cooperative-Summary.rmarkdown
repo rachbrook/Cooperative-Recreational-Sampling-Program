@@ -9,7 +9,7 @@ editor: visual
 ## Import packages and clean-up data
 
 
-```{r, warning = FALSE, message = FALSE, echo = FALSE}
+```{r}
 
 library(modelsummary)
 library(tidyverse)
@@ -17,62 +17,72 @@ library(data.table)
 library(ggplot2)
 library(readxl)
 library(dplyr)
+library(googlesheets4)
 
-Coop_Data <- read_excel("Cooperative-Sampling-Database-20250212.xlsx", 
-    sheet = "Merged Data", col_types = c("text", 
-        "text", "text", "text", "text", "text", 
-        "text", "text", "text", "date", "text", 
-        "numeric", "numeric", "text", "text", 
-        "text", "text", "text", "skip"))
+coop <- read_sheet("https://docs.google.com/spreadsheets/d/1_ydIN0FOKdNB5z35uV0qqcNfAGHdt1HGheUmDc5B1LI/edit?gid=1569662549#gid=1569662549", sheet = "Merged Data")
 
-#Insert Capture Dates where blank
-missing_rows <- which(is.na(Coop_Data$Capture_Date))
-Coop_Data$Capture_Date[missing_rows[1]] <- as.Date("2023-06-20")
-Coop_Data$Capture_Date[missing_rows[2]] <- as.Date("2024-08-10")
-Coop_Data$Capture_Date[missing_rows[3]] <- as.Date("2023-11-20")
-Coop_Data$Capture_Date[missing_rows[4]] <- as.Date("2023-11-20")
-Coop_Data$Capture_Date[missing_rows[5]] <- as.Date("2023-11-20")
-Coop_Data$Capture_Date[missing_rows[6]] <- as.Date("2023-11-20")
-Coop_Data$Capture_Date[missing_rows[7]] <- as.Date("2023-11-20")
-Coop_Data$Capture_Date[missing_rows[8]] <- as.Date("2023-11-20")
-Coop_Data$Capture_Date[missing_rows[9]] <- as.Date("2023-11-20")
-Coop_Data$Capture_Date[missing_rows[10]] <- as.Date("2023-12-15")
-Coop_Data$Capture_Date[missing_rows[11]] <- as.Date("2023-12-15")
-Coop_Data$Capture_Date[missing_rows[12]] <- as.Date("2024-10-17")
-Coop_Data$Capture_Date[missing_rows[13]] <- as.Date("2023-09-07")
+# Clean-up weird 'Capture_Date' formatting
+coop$Capture_Date <- sapply(coop$Capture_Date, function(x) {
+  if (length(x) == 0) {
+    NA_character_
+  } else if (is.character(x)) {
+    # Convert m/d/yyyy to ISO yyyy-mm-dd string
+    as.character(as.Date(x, format = "%m/%d/%Y"))
+  } else if (is.numeric(x)) {
+    # Convert Excel serial to ISO yyyy-mm-dd string
+    as.character(as.Date(x, origin = "1899-12-30"))
+  } else {
+    NA_character_
+  }
+})
 
-#Assign vessels to CRFS District
-Coop_Data <- Coop_Data %>%
+# Filter out rows where there is no capture date 
+# (filters out 15 samples as of 8/11/2025)
+coop <- coop[!is.na(coop$Capture_Date), ]
+
+
+
+```
+
+
+## Assign vessels to CRFS districts and add species common names
+
+
+```{r, warning = FALSE, message = FALSE, echo = FALSE}
+
+unique_vessels <- unique(coop$Vessel)
+print(unique_vessels)
+
+coop <- coop %>%
   mutate(CRFS_District = case_when(
-   
-Vessel %in% c("Outer Limits", "Premier", "Sum Fun", "Betty-O", "Western Pride", "Patriot-Newport", "Eldorado","Amigo") ~ "District 1 - South",
-    
-Vessel %in% c("Coral Sea", "Mirage", "Stardust") ~ "District 2 - Channel",
-    
-Vessel %in% c("Black Pearl", "Fiesta", "Patriot", "Last Meal","Big Anchovy","Kahuna","Legacy") ~ "District 3 - Central",  # Fixed the extra comma
-    
-Vessel %in% c("Sea Wolf", "Lovely Martha","New Sea Angler","Salty Lady","Queen of Hearts","New Captain Pete") ~ "District 4 - San Francisco",
-    
-Vessel %in% c("Sea Hawk", "Saylor Ann", "Kyndall Lynn", "Telstar") ~ "District 5 - Wine",
-    
-Vessel %in% c("Onyx", "Out Of The Box", "New Reel Steel", "Scrimshaw") ~ "District 6 - Redwood",  # Changed from `==` to `%in%`
 
+#District 1 - South
+Vessel %in% c("Betty-O","New Del Mar","Eldorado","Amigo","(Newport) Patriot","Western Pride","Thunderbird","Fury","Sum Fun","Outer Limits","Premier" ) ~ "District 1 - South",
+# District 2 - Channel  
+Vessel %in% c("Endeavor","Island Spirit","Coral Sea","Stardust","Mirage") ~ "District 2 - Channel",
+# District 3 - Central    
+Vessel %in% c("Infinity","Legacy","Big Anchovy","Kahuna","Last Meal","The Marianne","Black Pearl","Fiesta","(Avila) Patriot") ~ "District 3 - Central",  
+# District 4 - San Francisco    
+Vessel %in% c("Dragonfly","Big Eye","New Sea Angler","Salty Lady","Lovely Martha","Sea Wolf","Queen of Hearts","New Captain Pete","Riptide") ~ "District 4 - San Francisco",
+# District 5 - Wine   
+Vessel %in% c("Sea Hawk","Saylor Ann","Kyndall Lynn","Telstar") ~ "District 5 - Wine",
+# District 6 - Redwood    
+Vessel %in% c("Onyx","Out Of The Box","New Reel Steel","Scrimshaw","Fishy Business") ~ "District 6 - Redwood",  # Changed from `==` to `%in%`
 TRUE ~ "Unknown"  # Default for unmatched names
   ))
 
 #Import PacFIN Species Table
 PacFIN_Codes <- read_excel("PacFIN_Codes.xlsx")
-Coop_Data <- merge(Coop_Data, PacFIN_Codes, by = "PacFIN_Species_Code", all.x = TRUE)  # Left join
+coop <- merge(coop, PacFIN_Codes, by = "PacFIN_Species_Code", all.x = TRUE)  # Left join
 
-Coop_Data <- Coop_Data %>%
+coop <- coop %>%
   filter(!is.na(PacFIN_Species_Code))
 
-Coop_Data$Species_Name <- recode_factor(Coop_Data$Species_Name,
+coop$Species_Name <- recode_factor(coop$Species_Name,
                                       'Blue Rockfish' = "Blue/Deacon Rockfish",
                                       'Deacon Rockfish' = "Blue/Deacon Rockfish")
 
-
-write.csv(Coop_Data, "coop-data.csv", row.names = FALSE)
+#write.csv(Coop_Data, "coop-data.csv", row.names = FALSE)
 ```
 
 
@@ -81,9 +91,9 @@ write.csv(Coop_Data, "coop-data.csv", row.names = FALSE)
 
 ```{r, fig.width=15, fig.height=10, out.width="80%"}
 
-datasummary_crosstab(CRFS_District ~ Year, statistic = 1 ~ N, title = 'Table 1: Summary of groundfish sampled in 2022-2024', data = Coop_Data)
+datasummary_crosstab(CRFS_District ~ Year, statistic = 1 ~ N, title = 'Table 1: Summary of groundfish sampled in 2022-2025', data = coop)
 
-datasummary_crosstab(Species_Name ~ Year, title = 'Table 1: Summary of species sampled in 2022-2024', data = Coop_Data)
+datasummary_crosstab(Species_Name ~ Year,statistic = 1 ~ N, title = 'Table 1: Summary of species sampled in 2022-2025', data = coop)
 
 
 # Calculate the abundance of each species
@@ -424,28 +434,27 @@ Jonah Hill - Greenspotted Rockfish shipped to ADFW
 ```{r}
 
 # Specify the year and species combination
-target_year <- 2023
 target_species <- "Greenspotted Rockfish"
 
 # Filter the dataset for the specific combination
 GSPT_filtered_data <- Coop_Data %>%
-  filter(Year == target_year & Species_Name == target_species & Institution != "NMFS")
+  filter(Species_Name == target_species)
 
 # Randomly sample 20 rows from each district
-GSPT_sampled_data <- GSPT_filtered_data %>%
-  group_by(CRFS_District) %>%         # Group data by district
-  slice_sample(n = 29) %>%            # Randomly select 20 rows from each group
-  ungroup()                           # Ungroup the data
+#GSPT_sampled_data <- GSPT_filtered_data %>%
+#  group_by(CRFS_District) %>%         # Group data by district
+#  slice_sample(n = 29) %>%            # Randomly select 20 rows from each group
+#  ungroup()                           # Ungroup the data
 
 # Drop specific columns
-GSPT_2023_data <- GSPT_sampled_data %>%
+GSPT_all_data <- GSPT_filtered_data %>%
   select(-Sample_Number, -Carcass_Fork_Length_mm, -MANAGEMENT_PLAN_ID, -FISHERY_MANAGEMENT_PLAN, -SPECIES_GROUP_ID, -SPECIES_GROUP_NAME, -STOCK_COMPLEX_ID, -STOCK_COMPLEX_NAME, -Otoliths_Retained, -Fin_Clip_Retained, -Year_Month_Code) 
 
-GSPT_2023_data <- GSPT_2023_data %>%
+GSPT_all_data <- GSPT_all_data %>%
   select(Sample_ID, Species_Name, Scientific_Name, PacFIN_Species_Code, RecFIN_Species_Code,  Year, Project_ID, Capture_Date, CRFS_District, Port, Vessel, CDFW_Vessel_Number, everything())
 
 # Save File
-write.csv(GSPT_2023_data, "GSPT-2023-Data-RB20250108.csv", row.names = FALSE)
+write.csv(GSPT_all_data, "GSPT-All-Data-RB20250312.csv", row.names = FALSE)
 
 ```
 
