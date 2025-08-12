@@ -1,0 +1,601 @@
+---
+title: "Cooperative Summary"
+author: "Rachel Brooks"
+format: html
+editor: visual
+---
+
+## Import packages and clean-up data
+
+```{r}
+
+library(modelsummary)
+library(tidyverse)
+library(data.table)
+library(ggplot2)
+library(readxl)
+library(dplyr)
+library(googlesheets4)
+
+coop <- read_sheet("https://docs.google.com/spreadsheets/d/1_ydIN0FOKdNB5z35uV0qqcNfAGHdt1HGheUmDc5B1LI/edit?gid=1569662549#gid=1569662549", sheet = "Merged Data")
+
+# Clean-up weird 'Capture_Date' formatting
+coop$Capture_Date <- sapply(coop$Capture_Date, function(x) {
+  if (length(x) == 0) {
+    NA_character_
+  } else if (is.character(x)) {
+    # Convert m/d/yyyy to ISO yyyy-mm-dd string
+    as.character(as.Date(x, format = "%m/%d/%Y"))
+  } else if (is.numeric(x)) {
+    # Convert Excel serial to ISO yyyy-mm-dd string
+    as.character(as.Date(x, origin = "1899-12-30"))
+  } else {
+    NA_character_
+  }
+})
+
+# Filter out rows where there is no capture date 
+# (filters out 15 samples as of 8/11/2025)
+coop <- coop[!is.na(coop$Capture_Date), ]
+
+
+
+```
+
+## Assign vessels to CRFS districts and add species common names
+
+```{r, warning = FALSE, message = FALSE, echo = FALSE}
+
+unique_vessels <- unique(coop$Vessel)
+print(unique_vessels)
+
+coop <- coop %>%
+  mutate(CRFS_District = case_when(
+
+#District 1 - South
+Vessel %in% c("Betty-O","New Del Mar","Eldorado","Amigo","(Newport) Patriot","Western Pride","Thunderbird","Fury","Sum Fun","Outer Limits","Premier" ) ~ "District 1 - South",
+
+# District 2 - Channel  
+Vessel %in% c("Endeavor","Island Spirit","Coral Sea","Stardust","Mirage") ~ "District 2 - Channel",
+
+# District 3 - Central    
+Vessel %in% c("Infinity","Legacy","Big Anchovy","Kahuna","Last Meal","The Marianne","Black Pearl","Fiesta","(Avila) Patriot") ~ "District 3 - Central",  
+
+# District 4 - San Francisco    
+Vessel %in% c("Dragonfly","Big Eye","New Sea Angler","Salty Lady","Lovely Martha","Sea Wolf","Queen of Hearts","New Captain Pete","Riptide") ~ "District 4 - San Francisco",
+
+# District 5 - Wine   
+Vessel %in% c("Sea Hawk","Saylor Ann","Kyndall Lynn","Telstar") ~ "District 5 - Wine",
+
+# District 6 - Redwood    
+Vessel %in% c("Onyx","Out Of The Box","New Reel Steel","Scrimshaw","Fishy Business") ~ "District 6 - Redwood",  # Changed from `==` to `%in%`
+TRUE ~ "Unknown"  # Default for unmatched names
+  ))
+
+#Import PacFIN Species Table
+PacFIN_Codes <- read_excel("PacFIN_Codes.xlsx")
+coop <- merge(coop, PacFIN_Codes, by = "PacFIN_Species_Code", all.x = TRUE)  # Left join
+
+coop <- coop %>%
+  filter(!is.na(PacFIN_Species_Code))
+
+coop$Species_Name <- recode_factor(coop$Species_Name,
+                                      'Blue Rockfish' = "Blue/Deacon Rockfish",
+                                      'Deacon Rockfish' = "Blue/Deacon Rockfish")
+
+coop$Species_Name <- recode_factor(coop$Species_Name,
+                                'Vermilion Rockfish' = "Vermilion/Sunset Rockfish")
+
+#write.csv(Coop_Data, "coop-data.csv", row.names = FALSE)
+```
+
+## Summary of cooperative data by CRFS district
+
+```{r}
+
+library(dplyr)
+library(lubridate)
+library(tidyr)
+library(gt)
+
+# Build wide summary table
+district_summary_wide <- coop %>%
+  mutate(year = year(Capture_Date)) %>%
+  filter(year %in% 2022:2025) %>%
+  group_by(CRFS_District, year) %>%
+  summarise(n_fish = n(), .groups = "drop") %>%
+  pivot_wider(
+    names_from = year,
+    values_from = n_fish,
+    values_fill = 0
+  ) %>%
+  mutate(Total = `2022` + `2023` + `2024` + `2025`)
+
+# Reorder districts by number
+district_summary_wide <- district_summary_wide %>%
+  mutate(dist_num = as.numeric(gsub("\\D", "", CRFS_District))) %>%
+  arrange(dist_num) %>%
+  select(-dist_num)
+
+# Add coastwide total row
+district_summary_wide <- district_summary_wide %>%
+  bind_rows(
+    summarise(
+      .,
+      CRFS_District = "Coastwide Total",
+      `2022` = sum(`2022`, na.rm = TRUE),
+      `2023` = sum(`2023`, na.rm = TRUE),
+      `2024` = sum(`2024`, na.rm = TRUE),
+      `2025` = sum(`2025`, na.rm = TRUE),
+      Total  = sum(Total,  na.rm = TRUE)
+    )
+  )
+
+# Format for manuscript
+district_table <- district_summary_wide %>%
+  gt() %>%
+  cols_label(
+    CRFS_District = "District",
+    `2022` = "2022",
+    `2023` = "2023",
+    `2024` = "2024",
+    `2025` = "2025",
+    Total  = "Total"
+  ) %>%
+  fmt_number(
+    columns = c(`2022`, `2023`, `2024`, `2025`, Total),
+    decimals = 0
+  ) %>%
+  tab_style(
+    style = list(cell_text(weight = "bold")),
+    locations = cells_body(columns = Total)
+  ) %>%
+  cols_width(
+    CRFS_District ~ px(200),
+    everything() ~ px(90)
+  ) %>%
+  tab_options(
+    column_labels.padding = px(12),
+    data_row.padding = px(12)
+  ) %>%
+  # Bold the Coastwide Total row
+  tab_style(
+    style = list(cell_text(weight = "bold")),
+    locations = cells_body(
+      rows = CRFS_District == "Coastwide Total"
+    )
+  )
+
+district_table
+
+```
+
+```{r}
+
+# Build wide summary table
+species_summary_wide <- coop %>%
+  mutate(year = year(Capture_Date)) %>%
+  filter(year %in% 2022:2025) %>%
+  filter(!is.na(Species_Name), Species_Name != "") %>%
+  group_by(Scientific_Name, Species_Name, year) %>%       
+  summarise(n_fish = n(), .groups = "drop") %>%
+  pivot_wider(
+    names_from = year,
+    values_from = n_fish,
+    values_fill = 0
+  ) %>%
+  select(Scientific_Name, Species_Name, `2022`, `2023`, `2024`, `2025`) %>%
+  mutate(Total = `2022` + `2023` + `2024` + `2025`) %>%
+  arrange(Scientific_Name)
+
+# Format for manuscript
+species_table <- species_summary_wide %>%
+  gt() %>%
+  cols_label(
+    Scientific_Name = "Species",
+    Species_Name = "Common Name",
+    `2022` = "2022",
+    `2023` = "2023",
+    `2024` = "2024",
+    `2025` = "2025",
+    Total  = "Total"
+  ) %>%
+  fmt_number(
+    columns = c(`2022`, `2023`, `2024`, `2025`, Total),
+    decimals = 0
+  ) %>%
+  cols_align(
+    align = "left",           # force left alignment
+    columns = Species_Name
+  ) %>%
+  tab_style(
+    style = list(cell_text(weight = "bold")),
+    locations = cells_body(columns = Total)
+  ) %>%
+  cols_width(
+    Scientific_Name ~ px(300),
+    Species_Name ~ px(200),
+    everything() ~ px(90)
+  ) %>%
+  tab_options(
+    column_labels.padding = px(12),
+    data_row.padding = px(12)
+  ) %>%
+  tab_style(
+    style = list(cell_text(weight = "bold")),
+    locations = cells_body(
+      rows = Species_Name == "Coastwide Total"
+    )
+  )
+
+species_table
+
+```
+
+```{r, fig.width=15, fig.height=10, out.width="80%"}
+
+# Calculate the abundance of each species
+Abundance_Coastwide <- Coop_Data %>%
+  group_by(Species_Name) %>%
+  summarise(Abundance = n()) %>%
+  arrange(desc(Abundance)) %>%
+  top_n(12, Abundance)  # Get the top 10 most abundant species
+
+# Filter the dataset to include only top 10 species
+top_12_coastwide <- Coop_Data %>%
+  filter(Species_Name %in% Abundance_Coastwide$Species_Name)
+
+# Density plot
+ggplot(top_12_coastwide, aes(x = Fork_Length_mm, fill = Sex)) +
+ geom_histogram(aes(y = ..count..), bins = 20, alpha = 1, position = "identity", color = "black") +  # Histogram with density on y-axis
+  geom_density(alpha = 0.6, color = "black") +  # Kernel density plot overlaid
+  facet_wrap(~Species_Name) +  # Create separate panels for each species
+  labs(title = "",
+       x = "Fork Length (mm)",
+       y = "Count") +
+  theme_minimal() +
+  scale_fill_manual(values = c("tomato", "dodgerblue", "grey")) +
+  theme(
+    panel.grid = element_blank(),  # Remove grid lines
+    axis.title = element_text(size = 22),  # Adjust axis title size
+    axis.text = element_text(size = 22),   # Adjust axis label text size
+    plot.title = element_text(size = 22),  # Adjust plot title size
+    strip.text = element_text(size = 22),   # Adjust facet label size
+    legend.title = element_text(size = 22), # Increase legend title size
+    legend.text = element_text(size = 22),  # Increase legend text size
+    legend.key.size = unit(1, "cm")      # Increase the size of the legend keys
+  )
+
+```
+
+## District 6 - Redwood
+
+Includes F/V Onyx, F/V Out OF The Box, F/V New Reel Steel, F/V Scrimshaw
+
+```{r, fig.width=12, fig.height=10, out.width="80%", fig.cap="Length Frequency Distribution of Top 6 Most Abundant Species in Distrct 6 - Redwood"}
+
+D6 <- Coop_Data %>%
+  filter(CRFS_District == "District 6 - Redwood")
+datasummary_crosstab(Species_Name ~ Year, 
+          statistic = 1 ~ N, 
+          title = "Table 7: Summary of species sampled 2022-2024 for District 6 - Redwood", data = D6)
+
+# Calculate the abundance of each species
+Abundance_D6 <- D6 %>%
+  filter(Year == "2024") %>%
+  group_by(Species_Name) %>%
+  summarise(Abundance = n()) %>%
+  arrange(desc(Abundance)) %>%
+  top_n(6, Abundance)  # Get the top 10 most abundant species
+
+# Filter the dataset to include only top 10 species
+top_6_species_D6 <- D6 %>%
+  filter(Species_Name %in% Abundance_D6$Species_Name)
+
+# Density plot
+ggplot(top_6_species_D6, aes(x = Fork_Length_mm, fill = Sex)) +
+geom_histogram(aes(y = ..count..), bins = 20, alpha = 1, position = "identity", color = "black") +  # Histogram with density on y-axis
+  geom_density(alpha = 0.6, color = "black") +  # Kernel density plot overlaid
+  facet_wrap(~Species_Name) +  # Create separate panels for each species
+  labs(title = "",
+       x = "Fork Length (mm)",
+       y = "Count") +
+  theme_minimal() +
+  scale_fill_manual(values = c("tomato", "dodgerblue", "grey")) +
+  theme(
+    panel.grid = element_blank(),  # Remove grid lines
+    axis.title = element_text(size = 22),  # Adjust axis title size
+    axis.text = element_text(size = 22),   # Adjust axis label text size
+    plot.title = element_text(size = 22),  # Adjust plot title size
+    strip.text = element_text(size = 22),   # Adjust facet label size
+    legend.title = element_text(size = 22), # Increase legend title size
+    legend.text = element_text(size = 22),  # Increase legend text size
+    legend.key.size = unit(1, "cm")      # Increase the size of the legend keys
+  )
+
+```
+
+## District 5 - Wine
+
+Includes F/V Kyndall Lynn, F/V Sea Hawk, F/V Saylor Ann
+
+```{r, fig.width=12, fig.height=10, out.width="80%", fig.cap="Length Frequency Distribution of Top 6 Most Abundant Species in Distrct 5 - Redwood"}
+
+D5 <- Coop_Data %>%
+  filter(CRFS_District == "District 5 - Wine")
+datasummary_crosstab(Species_Name ~ Year, 
+          statistic = 1 ~ N, 
+          title = "Table 7: Summary of species sampled 2022-2024 for District 6 - Redwood", data = D5)
+
+# Calculate the abundance of each species
+Abundance_D5 <- D5 %>%
+  filter(Year == "2024") %>%
+  group_by(Species_Name) %>%
+  summarise(Abundance = n()) %>%
+  arrange(desc(Abundance)) %>%
+  top_n(6, Abundance)  # Get the top 10 most abundant species
+
+# Filter the dataset to include only top 10 species
+top_6_species_D5 <- D5 %>%
+  filter(Species_Name %in% Abundance_D5$Species_Name)
+
+# Density plot
+ggplot(top_6_species_D5, aes(x = Fork_Length_mm, fill = Sex)) +
+geom_histogram(aes(y = ..count..), bins = 20, alpha = 1, position = "identity", color = "black") +  # Histogram with density on y-axis
+  geom_density(alpha = 0.6, color = "black") +  # Kernel density plot overlaid
+  facet_wrap(~Species_Name) +  # Create separate panels for each species
+  labs(title = "",
+       x = "Fork Length (mm)",
+       y = "Count") +
+  theme_minimal() +
+  scale_fill_manual(values = c("tomato", "dodgerblue", "grey")) +
+  theme(
+    panel.grid = element_blank(),  # Remove grid lines
+    axis.title = element_text(size = 22),  # Adjust axis title size
+    axis.text = element_text(size = 22),   # Adjust axis label text size
+    plot.title = element_text(size = 22),  # Adjust plot title size
+    strip.text = element_text(size = 22),   # Adjust facet label size
+    legend.title = element_text(size = 22), # Increase legend title size
+    legend.text = element_text(size = 22),  # Increase legend text size
+    legend.key.size = unit(1, "cm")      # Increase the size of the legend keys
+  )
+
+
+```
+
+## District 4 - San Francisco
+
+```{r, fig.width=12, fig.height=10, out.width="80%", fig.cap="Length Frequency Distribution of Top 6 Most Abundant Species in Distrct 5 - Redwood"}
+
+D4 <- Coop_Data %>%
+  filter(CRFS_District == "District 4 - San Francisco")
+datasummary_crosstab(Species_Name ~ Year, 
+          statistic = 1 ~ N, 
+          title = "Table 5: Summary of species sampled 2022-2024 for District 4 - San Francisco", data = D4)
+
+# Calculate the abundance of each species
+Abundance_D4 <- D4 %>%  
+  filter(Year == "2024") %>%
+  group_by(Species_Name) %>%
+  summarise(Abundance = n()) %>%
+  arrange(desc(Abundance)) %>%
+  top_n(6, Abundance)  # Get the top 10 most abundant species
+
+# Filter the dataset to include only top 10 species
+top_6_species_D4 <- D4 %>%
+  filter(Species_Name %in% Abundance_D4$Species_Name)
+
+# Density plot
+ggplot(top_6_species_D4, aes(x = Fork_Length_mm, fill = Sex)) +
+geom_histogram(aes(y = ..count..), bins = 20, alpha = 1, position = "identity", color = "black") +  # Histogram with density on y-axis
+  geom_density(alpha = 0.6, color = "black") +  # Kernel density plot overlaid
+  facet_wrap(~Species_Name) +  # Create separate panels for each species
+  labs(title = "",
+       x = "Fork Length (mm)",
+       y = "Count") +
+  theme_minimal() +
+  scale_fill_manual(values = c("tomato", "dodgerblue", "grey")) +
+  theme(
+    panel.grid = element_blank(),  # Remove grid lines
+    axis.title = element_text(size = 22),  # Adjust axis title size
+    axis.text = element_text(size = 22),   # Adjust axis label text size
+    plot.title = element_text(size = 22),  # Adjust plot title size
+    strip.text = element_text(size = 22),   # Adjust facet label size
+    legend.title = element_text(size = 22), # Increase legend title size
+    legend.text = element_text(size = 22),  # Increase legend text size
+    legend.key.size = unit(1, "cm")      # Increase the size of the legend keys
+  )
+
+```
+
+## District 3 - Central
+
+```{r, fig.width=12, fig.height=10, out.width="80%", fig.cap="Length Frequency Distribution of Top 6 Most Abundant Species in Distrct 5 - Redwood"}
+
+D3 <- Coop_Data %>%
+  filter(CRFS_District == "District 3 - Central")
+datasummary_crosstab(Species_Name ~ Year, 
+          statistic = 1 ~ N, 
+          title = "Table 4: Summary of species sampled 2022-2024 for District 3 - Central", data = D3)
+
+# Calculate the abundance of each species
+Abundance_D3 <- D3 %>%  
+  filter(Year == "2024") %>%
+  group_by(Species_Name) %>%
+  summarise(Abundance = n()) %>%
+  arrange(desc(Abundance)) %>%
+  top_n(6, Abundance)  # Get the top 10 most abundant species
+
+# Filter the dataset to include only top 10 species
+top_6_species_D3 <- D3 %>%
+  filter(Species_Name %in% Abundance_D3$Species_Name)
+
+# Density plot
+ggplot(top_6_species_D3, aes(x = Fork_Length_mm, fill = Sex)) +
+geom_histogram(aes(y = ..count..), bins = 20, alpha = 1, position = "identity", color = "black") +  # Histogram with density on y-axis
+  geom_density(alpha = 0.6, color = "black") +  # Kernel density plot overlaid
+  facet_wrap(~Species_Name) +  # Create separate panels for each species
+  labs(title = "",
+       x = "Fork Length (mm)",
+       y = "Count") +
+  theme_minimal() +
+  scale_fill_manual(values = c("tomato", "dodgerblue", "grey")) +
+  theme(
+    panel.grid = element_blank(),  # Remove grid lines
+    axis.title = element_text(size = 22),  # Adjust axis title size
+    axis.text = element_text(size = 22),   # Adjust axis label text size
+    plot.title = element_text(size = 22),  # Adjust plot title size
+    strip.text = element_text(size = 22),   # Adjust facet label size
+    legend.title = element_text(size = 22), # Increase legend title size
+    legend.text = element_text(size = 22),  # Increase legend text size
+    legend.key.size = unit(1, "cm")      # Increase the size of the legend keys
+  )
+
+
+
+```
+
+## District 2 - Channel
+
+```{r, fig.width=12, fig.height=10, out.width="80%", fig.cap="Length Frequency Distribution of Top 6 Most Abundant Species in Distrct 5 - Redwood"}
+
+D2 <- Coop_Data %>%
+  filter(CRFS_District == "District 2 - Channel")
+datasummary_crosstab(Species_Name ~ Year, 
+          statistic = 1 ~ N, 
+          title = "Table 3: Summary of species sampled 2022-2024 for District 2 - Channel", data = D2)
+
+
+# Calculate the abundance of each species
+Abundance_D2 <- D2 %>%  
+  filter(Year == "2024") %>%
+  group_by(Species_Name) %>%
+  summarise(Abundance = n()) %>%
+  arrange(desc(Abundance)) %>%
+  top_n(6, Abundance)  # Get the top 10 most abundant species
+
+# Filter the dataset to include only top 10 species
+top_6_species_D2 <- D2 %>%
+  filter(Species_Name %in% Abundance_D2$Species_Name)
+
+# Density plot
+ggplot(top_6_species_D2, aes(x = Fork_Length_mm, fill = Sex)) +
+geom_histogram(aes(y = ..count..), bins = 20, alpha = 1, position = "identity", color = "black") +  # Histogram with density on y-axis
+  geom_density(alpha = 0.6, color = "black") +  # Kernel density plot overlaid
+  facet_wrap(~Species_Name) +  # Create separate panels for each species
+  labs(title = "",
+       x = "Fork Length (mm)",
+       y = "Count") +
+  theme_minimal() +
+  scale_fill_manual(values = c("tomato", "dodgerblue", "grey")) +
+  theme(
+    panel.grid = element_blank(),  # Remove grid lines
+    axis.title = element_text(size = 22),  # Adjust axis title size
+    axis.text = element_text(size = 22),   # Adjust axis label text size
+    plot.title = element_text(size = 22),  # Adjust plot title size
+    strip.text = element_text(size = 22),   # Adjust facet label size
+    legend.title = element_text(size = 22), # Increase legend title size
+    legend.text = element_text(size = 22),  # Increase legend text size
+    legend.key.size = unit(1, "cm")      # Increase the size of the legend keys
+  )
+
+
+
+```
+
+## District 1 - South
+
+```{r, fig.width=12, fig.height=10, out.width="80%", fig.cap="Length Frequency Distribution of Top 6 Most Abundant Species in District 1 - South"}
+
+D1 <- Coop_Data %>%
+  filter(CRFS_District == "District 1 - South")
+datasummary_crosstab(Species_Name ~ Year, 
+          statistic = 1 ~ N, 
+          title = "Table 2: Summary of species sampled 2022-2024 for District 1 - South", data = D1)
+
+# Calculate the abundance of each species
+Abundance_D1 <- D1 %>%  
+  filter(Year == "2024") %>%
+  group_by(Species_Name) %>%
+  summarise(Abundance = n()) %>%
+  arrange(desc(Abundance)) %>%
+  top_n(6, Abundance)  # Get the top 10 most abundant species
+
+# Filter the dataset to include only top 10 species
+top_6_species_D1 <- D1 %>%
+  filter(Species_Name %in% Abundance_D1$Species_Name)
+
+# Density plot
+ggplot(top_6_species_D1, aes(x = Fork_Length_mm, fill = Sex)) +
+ geom_histogram(aes(y = ..count..), bins = 20, alpha = 1, position = "identity", color = "black") +  # Histogram with density on y-axis
+  geom_density(alpha = 0.6, color = "black") +  # Kernel density plot overlaid
+  facet_wrap(~Species_Name) +  # Create separate panels for each species
+  labs(title = "",
+       x = "Fork Length (mm)",
+       y = "Count") +
+  theme_minimal() +
+  scale_fill_manual(values = c("tomato", "dodgerblue", "grey")) +
+  theme(
+    panel.grid = element_blank(),  # Remove grid lines
+    axis.title = element_text(size = 22),  # Adjust axis title size
+    axis.text = element_text(size = 22),   # Adjust axis label text size
+    plot.title = element_text(size = 22),  # Adjust plot title size
+    strip.text = element_text(size = 22),   # Adjust facet label size
+    legend.title = element_text(size = 22), # Increase legend title size
+    legend.text = element_text(size = 22),  # Increase legend text size
+    legend.key.size = unit(1, "cm")      # Increase the size of the legend keys
+  )
+```
+
+## Species-Specific Database Sorting
+
+Jonah Hill - Greenspotted Rockfish shipped to ADFW
+
+```{r}
+
+# Specify the year and species combination
+target_species <- "Greenspotted Rockfish"
+
+# Filter the dataset for the specific combination
+GSPT_filtered_data <- Coop_Data %>%
+  filter(Species_Name == target_species)
+
+# Randomly sample 20 rows from each district
+#GSPT_sampled_data <- GSPT_filtered_data %>%
+#  group_by(CRFS_District) %>%         # Group data by district
+#  slice_sample(n = 29) %>%            # Randomly select 20 rows from each group
+#  ungroup()                           # Ungroup the data
+
+# Drop specific columns
+GSPT_all_data <- GSPT_filtered_data %>%
+  select(-Sample_Number, -Carcass_Fork_Length_mm, -MANAGEMENT_PLAN_ID, -FISHERY_MANAGEMENT_PLAN, -SPECIES_GROUP_ID, -SPECIES_GROUP_NAME, -STOCK_COMPLEX_ID, -STOCK_COMPLEX_NAME, -Otoliths_Retained, -Fin_Clip_Retained, -Year_Month_Code) 
+
+GSPT_all_data <- GSPT_all_data %>%
+  select(Sample_ID, Species_Name, Scientific_Name, PacFIN_Species_Code, RecFIN_Species_Code,  Year, Project_ID, Capture_Date, CRFS_District, Port, Vessel, CDFW_Vessel_Number, everything())
+
+# Save File
+write.csv(GSPT_all_data, "GSPT-All-Data-RB20250312.csv", row.names = FALSE)
+
+```
+
+Spreadsheet of Missing Otoliths
+
+```{r}
+# Specify the year and species combination
+target_year <- 2023
+institution  <- "NMFS"
+
+# Filter the dataset for the specific combination
+missing_NMFS_data <- Coop_Data %>%
+  filter(Year == target_year & Institution == "NMFS")
+
+# Drop specific columns
+missing_NMFS_data <- missing_NMFS_data %>%
+  select(-Sample_Number, -Carcass_Fork_Length_mm, -MANAGEMENT_PLAN_ID, -FISHERY_MANAGEMENT_PLAN, -SPECIES_GROUP_ID, -SPECIES_GROUP_NAME, -STOCK_COMPLEX_ID, -STOCK_COMPLEX_NAME, -Otoliths_Retained, -Fin_Clip_Retained, -Year_Month_Code) 
+
+missing_NMFS_data <- missing_NMFS_data %>%
+  select(Sample_ID, Species_Name, Scientific_Name, PacFIN_Species_Code, RecFIN_Species_Code,  Year, Project_ID, Capture_Date, CRFS_District, Port, Vessel, CDFW_Vessel_Number, everything())
+
+# Save File
+write.csv(missing_NMFS_data, "Missing-NMFS-Data-RB20250108.csv", row.names = FALSE)
+```
