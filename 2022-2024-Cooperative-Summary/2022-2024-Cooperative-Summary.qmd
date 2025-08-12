@@ -54,14 +54,19 @@ coop <- coop %>%
 
 #District 1 - South
 Vessel %in% c("Betty-O","New Del Mar","Eldorado","Amigo","(Newport) Patriot","Western Pride","Thunderbird","Fury","Sum Fun","Outer Limits","Premier" ) ~ "District 1 - South",
+
 # District 2 - Channel  
 Vessel %in% c("Endeavor","Island Spirit","Coral Sea","Stardust","Mirage") ~ "District 2 - Channel",
+
 # District 3 - Central    
 Vessel %in% c("Infinity","Legacy","Big Anchovy","Kahuna","Last Meal","The Marianne","Black Pearl","Fiesta","(Avila) Patriot") ~ "District 3 - Central",  
+
 # District 4 - San Francisco    
 Vessel %in% c("Dragonfly","Big Eye","New Sea Angler","Salty Lady","Lovely Martha","Sea Wolf","Queen of Hearts","New Captain Pete","Riptide") ~ "District 4 - San Francisco",
+
 # District 5 - Wine   
 Vessel %in% c("Sea Hawk","Saylor Ann","Kyndall Lynn","Telstar") ~ "District 5 - Wine",
+
 # District 6 - Redwood    
 Vessel %in% c("Onyx","Out Of The Box","New Reel Steel","Scrimshaw","Fishy Business") ~ "District 6 - Redwood",  # Changed from `==` to `%in%`
 TRUE ~ "Unknown"  # Default for unmatched names
@@ -78,10 +83,154 @@ coop$Species_Name <- recode_factor(coop$Species_Name,
                                       'Blue Rockfish' = "Blue/Deacon Rockfish",
                                       'Deacon Rockfish' = "Blue/Deacon Rockfish")
 
+coop$Species_Name <- recode_factor(coop$Species_Name,
+                                'Vermilion Rockfish' = "Vermilion/Sunset Rockfish")
+
 #write.csv(Coop_Data, "coop-data.csv", row.names = FALSE)
 ```
 
-## Summary of Cooperative Data - OVERALL
+## Summary of cooperative data by CRFS district
+
+```{r}
+
+library(dplyr)
+library(lubridate)
+library(tidyr)
+library(gt)
+
+# Build wide summary table
+district_summary_wide <- coop %>%
+  mutate(year = year(Capture_Date)) %>%
+  filter(year %in% 2022:2025) %>%
+  group_by(CRFS_District, year) %>%
+  summarise(n_fish = n(), .groups = "drop") %>%
+  pivot_wider(
+    names_from = year,
+    values_from = n_fish,
+    values_fill = 0
+  ) %>%
+  mutate(Total = `2022` + `2023` + `2024` + `2025`)
+
+# Reorder districts by number
+district_summary_wide <- district_summary_wide %>%
+  mutate(dist_num = as.numeric(gsub("\\D", "", CRFS_District))) %>%
+  arrange(dist_num) %>%
+  select(-dist_num)
+
+# Add coastwide total row
+district_summary_wide <- district_summary_wide %>%
+  bind_rows(
+    summarise(
+      .,
+      CRFS_District = "Coastwide Total",
+      `2022` = sum(`2022`, na.rm = TRUE),
+      `2023` = sum(`2023`, na.rm = TRUE),
+      `2024` = sum(`2024`, na.rm = TRUE),
+      `2025` = sum(`2025`, na.rm = TRUE),
+      Total  = sum(Total,  na.rm = TRUE)
+    )
+  )
+
+# Format for manuscript
+district_table <- district_summary_wide %>%
+  gt() %>%
+  cols_label(
+    CRFS_District = "District",
+    `2022` = "2022",
+    `2023` = "2023",
+    `2024` = "2024",
+    `2025` = "2025",
+    Total  = "Total"
+  ) %>%
+  fmt_number(
+    columns = c(`2022`, `2023`, `2024`, `2025`, Total),
+    decimals = 0
+  ) %>%
+  tab_style(
+    style = list(cell_text(weight = "bold")),
+    locations = cells_body(columns = Total)
+  ) %>%
+  cols_width(
+    CRFS_District ~ px(200),
+    everything() ~ px(90)
+  ) %>%
+  tab_options(
+    column_labels.padding = px(12),
+    data_row.padding = px(12)
+  ) %>%
+  # Bold the Coastwide Total row
+  tab_style(
+    style = list(cell_text(weight = "bold")),
+    locations = cells_body(
+      rows = CRFS_District == "Coastwide Total"
+    )
+  )
+
+district_table
+
+```
+
+```{r}
+
+# Build wide summary table
+species_summary_wide <- coop %>%
+  mutate(year = year(Capture_Date)) %>%
+  filter(year %in% 2022:2025) %>%
+  filter(!is.na(Species_Name), Species_Name != "") %>%
+  group_by(Scientific_Name, Species_Name, year) %>%       
+  summarise(n_fish = n(), .groups = "drop") %>%
+  pivot_wider(
+    names_from = year,
+    values_from = n_fish,
+    values_fill = 0
+  ) %>%
+  select(Scientific_Name, Species_Name, `2022`, `2023`, `2024`, `2025`) %>%
+  mutate(Total = `2022` + `2023` + `2024` + `2025`) %>%
+  arrange(Scientific_Name)
+
+# Format for manuscript
+species_table <- species_summary_wide %>%
+  gt() %>%
+  cols_label(
+    Scientific_Name = "Species",
+    Species_Name = "Common Name",
+    `2022` = "2022",
+    `2023` = "2023",
+    `2024` = "2024",
+    `2025` = "2025",
+    Total  = "Total"
+  ) %>%
+  fmt_number(
+    columns = c(`2022`, `2023`, `2024`, `2025`, Total),
+    decimals = 0
+  ) %>%
+  cols_align(
+    align = "left",           # force left alignment
+    columns = Species_Name
+  ) %>%
+  tab_style(
+    style = list(cell_text(weight = "bold")),
+    locations = cells_body(columns = Total)
+  ) %>%
+  cols_width(
+    Scientific_Name ~ px(300),
+    Species_Name ~ px(200),
+    everything() ~ px(90)
+  ) %>%
+  tab_options(
+    column_labels.padding = px(12),
+    data_row.padding = px(12)
+  ) %>%
+  tab_style(
+    style = list(cell_text(weight = "bold")),
+    locations = cells_body(
+      rows = Species_Name == "Coastwide Total"
+    )
+  )
+
+species_table
+
+```
 
 ```{r, fig.width=15, fig.height=10, out.width="80%"}
 
