@@ -16,6 +16,7 @@ library(ggplot2)
 library(readxl)
 library(dplyr)
 library(googlesheets4)
+library(webshot2)
 
 coop <- read_sheet("https://docs.google.com/spreadsheets/d/1_ydIN0FOKdNB5z35uV0qqcNfAGHdt1HGheUmDc5B1LI/edit?gid=1569662549#gid=1569662549", sheet = "Merged Data")
 
@@ -53,22 +54,22 @@ coop <- coop %>%
   mutate(CRFS_District = case_when(
 
 #District 1 - South
-Vessel %in% c("Betty-O","New Del Mar","Eldorado","Amigo","(Newport) Patriot","Western Pride","Thunderbird","Fury","Sum Fun","Outer Limits","Premier" ) ~ "District 1 - South",
+Vessel %in% c("Betty-O","New Del Mar","Eldorado","Amigo","(Newport) Patriot","Western Pride","Thunderbird","Fury","Sum Fun","Outer Limits","Premier" ) ~ "District 1",
 
 # District 2 - Channel  
-Vessel %in% c("Endeavor","Island Spirit","Coral Sea","Stardust","Mirage") ~ "District 2 - Channel",
+Vessel %in% c("Endeavor","Island Spirit","Coral Sea","Stardust","Mirage") ~ "District 2",
 
 # District 3 - Central    
-Vessel %in% c("Infinity","Legacy","Big Anchovy","Kahuna","Last Meal","The Marianne","Black Pearl","Fiesta","(Avila) Patriot") ~ "District 3 - Central",  
+Vessel %in% c("Infinity","Legacy","Big Anchovy","Kahuna","Last Meal","The Marianne","Black Pearl","Fiesta","(Avila) Patriot") ~ "District 3",  
 
 # District 4 - San Francisco    
-Vessel %in% c("Dragonfly","Big Eye","New Sea Angler","Salty Lady","Lovely Martha","Sea Wolf","Queen of Hearts","New Captain Pete","Riptide") ~ "District 4 - San Francisco",
+Vessel %in% c("Dragonfly","Big Eye","New Sea Angler","Salty Lady","Lovely Martha","Sea Wolf","Queen of Hearts","New Captain Pete","Riptide") ~ "District 4",
 
 # District 5 - Wine   
-Vessel %in% c("Sea Hawk","Saylor Ann","Kyndall Lynn","Telstar") ~ "District 5 - Wine",
+Vessel %in% c("Sea Hawk","Saylor Ann","Kyndall Lynn","Telstar") ~ "District 5",
 
 # District 6 - Redwood    
-Vessel %in% c("Onyx","Out Of The Box","New Reel Steel","Scrimshaw","Fishy Business") ~ "District 6 - Redwood",  # Changed from `==` to `%in%`
+Vessel %in% c("Onyx","Out Of The Box","New Reel Steel","Scrimshaw","Fishy Business") ~ "District 6",  # Changed from `==` to `%in%`
 TRUE ~ "Unknown"  # Default for unmatched names
   ))
 
@@ -89,7 +90,7 @@ coop$Species_Name <- recode_factor(coop$Species_Name,
 #write.csv(Coop_Data, "coop-data.csv", row.names = FALSE)
 ```
 
-## Summary of cooperative data by CRFS district
+## Annual summary of cooperative data by CRFS district
 
 ```{r}
 
@@ -151,7 +152,7 @@ district_table <- district_summary_wide %>%
     locations = cells_body(columns = Total)
   ) %>%
   cols_width(
-    CRFS_District ~ px(200),
+    CRFS_District ~ px(130),
     everything() ~ px(90)
   ) %>%
   tab_options(
@@ -168,7 +169,11 @@ district_table <- district_summary_wide %>%
 
 district_table
 
+gtsave(district_table, "district_table.pdf")
+
 ```
+
+## Annual summary of cooperative data by species 
 
 ```{r}
 
@@ -177,14 +182,14 @@ species_summary_wide <- coop %>%
   mutate(year = year(Capture_Date)) %>%
   filter(year %in% 2022:2025) %>%
   filter(!is.na(Species_Name), Species_Name != "") %>%
-  group_by(Scientific_Name, Species_Name, year) %>%       
+  group_by(Species_Name, Scientific_Name, year) %>%       
   summarise(n_fish = n(), .groups = "drop") %>%
   pivot_wider(
     names_from = year,
     values_from = n_fish,
     values_fill = 0
   ) %>%
-  select(Scientific_Name, Species_Name, `2022`, `2023`, `2024`, `2025`) %>%
+  select(Species_Name, Scientific_Name, `2022`, `2023`, `2024`, `2025`) %>%
   mutate(Total = `2022` + `2023` + `2024` + `2025`) %>%
   arrange(Scientific_Name)
 
@@ -208,6 +213,10 @@ species_table <- species_summary_wide %>%
     align = "left",           # force left alignment
     columns = Species_Name
   ) %>%
+     tab_style(
+    style = cell_text(style = "italic"),
+    locations = cells_body(columns = "Scientific_Name")
+  ) %>%
   tab_style(
     style = list(cell_text(weight = "bold")),
     locations = cells_body(columns = Total)
@@ -229,6 +238,81 @@ species_table <- species_summary_wide %>%
   )
 
 species_table
+
+gtsave(species_table, "species_table.pdf")
+
+```
+
+## Summary of species by district
+
+```{r}
+
+# Define your ordered districts (adjust names exactly as in your data)
+ordered_districts <- c(
+  "District 1",
+  "District 2",
+  "District 3",
+  "District 4",
+  "District 5",
+  "District 6"
+)
+
+species_by_district_wide <- coop %>%
+  filter(!is.na(Species_Name), Species_Name != "") %>%
+  group_by(Species_Name, Scientific_Name, CRFS_District) %>%
+  summarise(n_fish = n(), .groups = "drop") %>%
+  pivot_wider(
+    names_from = CRFS_District,
+    values_from = n_fish,
+    values_fill = 0
+  ) %>%
+  # Reorder columns: first species columns, then districts in desired order, then Total
+  mutate(Total = rowSums(across(all_of(ordered_districts)))) %>%
+  select(
+    Species_Name,
+    Scientific_Name,
+    all_of(ordered_districts),
+    Total
+  ) %>%
+  arrange(Scientific_Name)
+
+numeric_cols <- setdiff(colnames(species_by_district_wide), c("Species_Name", "Scientific_Name"))
+
+species_by_district_table <- species_by_district_wide %>%
+  gt() %>%
+  cols_label(
+    Species_Name = "Common Name",
+    Scientific_Name = "Species"
+  ) %>%
+  fmt_number(
+    columns = numeric_cols,
+    decimals = 0
+  ) %>%
+  cols_align(
+    align = "left",
+    columns = c(Species_Name, Scientific_Name)
+  ) %>%
+   tab_style(
+    style = cell_text(style = "italic"),
+    locations = cells_body(columns = "Scientific_Name")
+  ) %>%
+  tab_style(
+    style = list(cell_text(weight = "bold")),
+    locations = cells_body(columns = "Total")
+  ) %>%
+  cols_width(
+    Scientific_Name ~ px(300),
+    Species_Name ~ px(200),
+    everything() ~ px(90)
+  ) %>%
+  tab_options(
+    column_labels.padding = px(12),
+    data_row.padding = px(12)
+  )
+
+species_by_district_table
+
+gtsave(species_by_district_table, "species_by_district_table.pdf")
 
 ```
 
@@ -543,59 +627,5 @@ ggplot(top_6_species_D1, aes(x = Fork_Length_mm, fill = Sex)) +
     strip.text = element_text(size = 22),   # Adjust facet label size
     legend.title = element_text(size = 22), # Increase legend title size
     legend.text = element_text(size = 22),  # Increase legend text size
-    legend.key.size = unit(1, "cm")      # Increase the size of the legend keys
-  )
-```
-
-## Species-Specific Database Sorting
-
-Jonah Hill - Greenspotted Rockfish shipped to ADFW
-
-```{r}
-
-# Specify the year and species combination
-target_species <- "Greenspotted Rockfish"
-
-# Filter the dataset for the specific combination
-GSPT_filtered_data <- Coop_Data %>%
-  filter(Species_Name == target_species)
-
-# Randomly sample 20 rows from each district
-#GSPT_sampled_data <- GSPT_filtered_data %>%
-#  group_by(CRFS_District) %>%         # Group data by district
-#  slice_sample(n = 29) %>%            # Randomly select 20 rows from each group
-#  ungroup()                           # Ungroup the data
-
-# Drop specific columns
-GSPT_all_data <- GSPT_filtered_data %>%
-  select(-Sample_Number, -Carcass_Fork_Length_mm, -MANAGEMENT_PLAN_ID, -FISHERY_MANAGEMENT_PLAN, -SPECIES_GROUP_ID, -SPECIES_GROUP_NAME, -STOCK_COMPLEX_ID, -STOCK_COMPLEX_NAME, -Otoliths_Retained, -Fin_Clip_Retained, -Year_Month_Code) 
-
-GSPT_all_data <- GSPT_all_data %>%
-  select(Sample_ID, Species_Name, Scientific_Name, PacFIN_Species_Code, RecFIN_Species_Code,  Year, Project_ID, Capture_Date, CRFS_District, Port, Vessel, CDFW_Vessel_Number, everything())
-
-# Save File
-write.csv(GSPT_all_data, "GSPT-All-Data-RB20250312.csv", row.names = FALSE)
-
-```
-
-Spreadsheet of Missing Otoliths
-
-```{r}
-# Specify the year and species combination
-target_year <- 2023
-institution  <- "NMFS"
-
-# Filter the dataset for the specific combination
-missing_NMFS_data <- Coop_Data %>%
-  filter(Year == target_year & Institution == "NMFS")
-
-# Drop specific columns
-missing_NMFS_data <- missing_NMFS_data %>%
-  select(-Sample_Number, -Carcass_Fork_Length_mm, -MANAGEMENT_PLAN_ID, -FISHERY_MANAGEMENT_PLAN, -SPECIES_GROUP_ID, -SPECIES_GROUP_NAME, -STOCK_COMPLEX_ID, -STOCK_COMPLEX_NAME, -Otoliths_Retained, -Fin_Clip_Retained, -Year_Month_Code) 
-
-missing_NMFS_data <- missing_NMFS_data %>%
-  select(Sample_ID, Species_Name, Scientific_Name, PacFIN_Species_Code, RecFIN_Species_Code,  Year, Project_ID, Capture_Date, CRFS_District, Port, Vessel, CDFW_Vessel_Number, everything())
-
-# Save File
-write.csv(missing_NMFS_data, "Missing-NMFS-Data-RB20250108.csv", row.names = FALSE)
+    legend.key.size = unit(1, "cm")      # Increase the size of the legend ke
 ```
