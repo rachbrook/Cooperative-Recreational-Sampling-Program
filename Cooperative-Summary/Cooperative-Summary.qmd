@@ -147,6 +147,106 @@ coop$Capture_Date <- sapply(coop$Capture_Date, function(x) {
 # (filters out 15 samples as of 8/11/2025)
 coop <- coop[!is.na(coop$Capture_Date), ]
 
+
+```
+
+## Project Map
+
+```{r, fig-width=5, fig-height=5, dpi=300}
+
+library(tigris)
+library(sf)
+
+# Download California counties (simplified)
+counties <- counties(state = "CA", cb = TRUE, class = "sf")
+
+# Map counties to CRFS districts
+district_map <- list(
+  "District 1" = c("Los Angeles", "Orange", "San Diego"),
+  "District 2" = c("Santa Barbara", "Ventura"),
+  "District 3" = c("Santa Cruz", "Monterey", "San Luis Obispo"),
+  "District 4" = c("Sonoma", "Marin", "San Francisco", "San Mateo",
+                      "Alameda", "Contra Costa", "Solano", "Santa Clara"),
+  "District 5" = c("Mendocino", "Humboldt"),
+  "District 6" = c("Del Norte", "Humboldt")
+)
+
+counties$district <- NA
+for (d in names(district_map)) {
+  counties$district[counties$NAME %in% district_map[[d]]] <- d
+}
+
+# Custom colors
+library(viridis)
+
+district_colors <- viridis(n = 6)  # "M" = magma
+names(district_colors) <- paste0("District ", 6:1)
+
+# Compute centroids for labels
+district_centroids <- counties %>%
+  filter(!is.na(district)) %>%
+  group_by(district) %>%
+  summarise(geometry = st_union(geometry)) %>%
+  st_centroid() %>%
+  st_coordinates() %>%
+  as.data.frame() %>%
+  mutate(district = c("District 1", "District 2", "District 3", "District 4", "District 5", "District 6"))
+
+# Manually adjust label positions
+district_centroids <- district_centroids %>%
+  mutate(
+    X = case_when(
+      district == "District 3" ~ X - 2,
+      district == "District 2" ~ X - 2.5,
+      district == "District 6" ~ X - 2,
+      district == "District 4" ~ X - 2.5,
+      district == "District 1" ~ X - 3.5,
+      district == "District 5" ~ X - 2,
+      TRUE ~ X
+    ),
+    Y = case_when(
+      district == "District 3" ~ Y - 0.1,
+      district == "District 2" ~ Y - 0.5,
+      district == "District 6" ~ Y + 0.05,
+      district == "District 4" ~ Y - 0.4,
+      district == "District 1" ~ Y - 0.5,
+      district == "District 5" ~ Y - 0.25,
+      TRUE ~ Y
+    )
+  )
+
+# Create California outline
+ca_outline <- counties %>% st_union() %>% st_sf()
+
+# Plot
+ggplot() +
+  # Background counties
+  geom_sf(data = counties, fill = "grey80", color = "grey80") +
+  # CRFS districts
+  geom_sf(data = counties[!is.na(counties$district), ], 
+          aes(fill = district), color = "black") +
+  # California outline
+  geom_sf(data = ca_outline, fill = NA, color = "black", size = 1) +
+  # District labels
+  geom_text(data = district_centroids, 
+            aes(x = X, y = Y, label = district),
+            color = "black", size = 4, fontface = "bold") +
+  scale_fill_manual(values = district_colors) +
+  coord_sf(xlim = c(-127, -114), ylim = c(32, 42)) +
+  theme_minimal() +  # keep axes, grid lines, and ticks
+  theme(
+    axis.title = element_blank(),  # remove axis titles
+    legend.position = "none",
+    plot.title = element_text(size = 16, face = "bold")
+  ) +
+  labs(title = "")
+
+```
+
+## Assign vessels to CRFS districts and add species common names
+
+```{r, warning = FALSE, message = FALSE, echo = FALSE}
+
 unique_vessels <- unique(coop$Vessel)
 print(unique_vessels)
 
@@ -499,4 +599,5 @@ ggplot(top_12_coastwide_clean, aes(x = Fork_Length_mm, fill = Sex)) +
     legend.text = element_text(size = 18),
     legend.key.size = unit(1, "cm")
   )
+
 ```
