@@ -104,7 +104,10 @@ ggplot() +
   coord_sf(xlim = c(-127, -114), ylim = c(32, 42)) +
   theme_minimal() +  # keep axes, grid lines, and ticks
   theme(
-    axis.title = element_blank(),  # remove axis titles
+     panel.grid = element_blank(),   # remove gridlines
+    axis.ticks = element_blank(),   # remove ticks
+    axis.text  = element_blank(),   # remove tick labels
+    axis.title = element_blank(),   # remove axis titles
     legend.position = "none",
     plot.title = element_text(size = 16, face = "bold")
   ) +
@@ -145,7 +148,7 @@ coop$Capture_Date <- sapply(coop$Capture_Date, function(x) {
 
 # Filter out rows where there is no capture date 
 # (filters out 15 samples as of 8/11/2025)
-coop <- coop[!is.na(coop$Capture_Date), ]
+#coop <- coop[!is.na(coop$Capture_Date), ]
 
 unique_vessels <- unique(coop$Vessel)
 print(unique_vessels)
@@ -154,7 +157,7 @@ coop <- coop %>%
   mutate(CRFS_District = case_when(
 
 #District 1 - South
-Vessel %in% c("Betty-O","New Del Mar","Eldorado","Amigo","(Newport) Patriot","Western Pride","Thunderbird","Fury","Sum Fun","Outer Limits","Premier" ) ~ "District 1",
+Vessel %in% c("Betty-O","New Del Mar","Eldorado","Amigo","(Newport) Patriot","Western Pride","Thunderbird","Fury","Sum Fun","Outer Limits","Premier", "Malihini" ) ~ "District 1",
 
 # District 2 - Channel  
 Vessel %in% c("Endeavor","Island Spirit","Coral Sea","Stardust","Mirage") ~ "District 2",
@@ -163,7 +166,7 @@ Vessel %in% c("Endeavor","Island Spirit","Coral Sea","Stardust","Mirage") ~ "Dis
 Vessel %in% c("Infinity","Legacy","Big Anchovy","Kahuna","Last Meal","The Marianne","Black Pearl","Fiesta","(Avila) Patriot") ~ "District 3",  
 
 # District 4 - San Francisco    
-Vessel %in% c("Dragonfly","Big Eye","New Sea Angler","Salty Lady","Lovely Martha","Sea Wolf","Queen of Hearts","New Captain Pete","Riptide") ~ "District 4",
+Vessel %in% c("Dragonfly","Big Eye","Sorta Salty","New Sea Angler","Salty Lady","Lovely Martha","Sea Wolf","Queen of Hearts","New Captain Pete","Riptide") ~ "District 4",
 
 # District 5 - Wine   
 Vessel %in% c("Sea Hawk","Saylor Ann","Kyndall Lynn","Telstar") ~ "District 5",
@@ -183,11 +186,14 @@ coop <- coop %>%
 coop$Species_Name <- recode_factor(coop$Species_Name,
                                       'Blue Rockfish' = "Blue/Deacon Rockfish",
                                       'Deacon Rockfish' = "Blue/Deacon Rockfish")
+coop$Scientific_Name <- recode_factor(coop$Scientific_Name,
+                                      'Sebastes mystinus' = "Sebastes mystinus/diaconus",
+                                      'Sebastes diaconus' = "Sebastes mystinus/diaconus")
 
 coop$Species_Name <- recode_factor(coop$Species_Name,
                                 'Vermilion Rockfish' = "Vermilion/Sunset Rockfish")
 
-#write.csv(Coop_Data, "coop-data.csv", row.names = FALSE)
+#write.csv(coop, "coop-data.csv", row.names = FALSE)
 
 ```
 
@@ -201,16 +207,16 @@ library(gt)
 
 # Build wide summary table
 district_summary_wide <- coop %>%
-  mutate(year = year(Capture_Date)) %>%
-  filter(year %in% 2022:2025) %>%
-  group_by(CRFS_District, year) %>%
+  group_by(CRFS_District, Year) %>%
   summarise(n_fish = n(), .groups = "drop") %>%
   pivot_wider(
-    names_from = year,
+    names_from = Year,
     values_from = n_fish,
     values_fill = 0
   ) %>%
-  mutate(Total = `2022` + `2023` + `2024` + `2025`)
+  mutate(
+    Total = rowSums(across(where(is.numeric)))
+  )
 
 # Reorder districts by number
 district_summary_wide <- district_summary_wide %>%
@@ -269,7 +275,7 @@ district_table <- district_summary_wide %>%
 
 district_table
 
-#gtsave(district_table, "district_table.png")
+gtsave(district_table, "district_table.png")
 
 ```
 
@@ -277,23 +283,42 @@ district_table
 
 ```{r}
 
+
 # Build wide summary table
 species_summary_wide <- coop %>%
-  mutate(year = year(Capture_Date)) %>%
-  filter(year %in% 2022:2025) %>%
+  filter(Year %in% 2022:2025) %>%
   filter(!is.na(Species_Name), Species_Name != "") %>%
-  group_by(Species_Name, Scientific_Name, year) %>%       
+  group_by(Species_Name, Scientific_Name, Year) %>%
   summarise(n_fish = n(), .groups = "drop") %>%
   pivot_wider(
-    names_from = year,
+    names_from = Year,
     values_from = n_fish,
     values_fill = 0
   ) %>%
-  select(Species_Name, Scientific_Name, `2022`, `2023`, `2024`, `2025`) %>%
-  mutate(Total = `2022` + `2023` + `2024` + `2025`) %>%
-  arrange(Scientific_Name)
+  mutate(
+    Total = rowSums(across(where(is.numeric)))
+  ) %>%
+  bind_rows(
+    summarise(
+      .,
+      Species_Name = "Coastwide Total",
+      Scientific_Name = "",
+      across(where(is.numeric), ~ sum(.x, na.rm = TRUE))
+    )
+  ) %>%
+  mutate(
+    is_total = Species_Name == "Coastwide Total"
+  ) %>%
+  arrange(
+    is_total,                 # Coastwide Total last
+    desc(Total),              # Most common species first
+    Scientific_Name            # Alphabetical tie-breaker
+  ) %>%
+  select(-is_total)
 
-# Format for manuscript
+
+
+# Format table for manuscript
 species_table <- species_summary_wide %>%
   gt() %>%
   cols_label(
@@ -310,15 +335,15 @@ species_table <- species_summary_wide %>%
     decimals = 0
   ) %>%
   cols_align(
-    align = "left",           # force left alignment
+    align = "left",
     columns = Species_Name
   ) %>%
-     tab_style(
+  tab_style(
     style = cell_text(style = "italic"),
-    locations = cells_body(columns = "Scientific_Name")
+    locations = cells_body(columns = Scientific_Name)
   ) %>%
   tab_style(
-    style = list(cell_text(weight = "bold")),
+    style = cell_text(weight = "bold"),
     locations = cells_body(columns = Total)
   ) %>%
   cols_width(
@@ -331,15 +356,14 @@ species_table <- species_summary_wide %>%
     data_row.padding = px(12)
   ) %>%
   tab_style(
-    style = list(cell_text(weight = "bold")),
+    style = cell_text(weight = "bold"),
     locations = cells_body(
       rows = Species_Name == "Coastwide Total"
     )
   )
 
-species_table
-
-#gtsave(species_table, "species_table.png")
+# Save table
+gtsave(species_table, "species_table.png")
 
 ```
 
@@ -420,52 +444,81 @@ species_by_district_table
 
 ```{r}
 
-# Count per species per district
-species_counts <- coop %>%
-  filter(!is.na(Species_Name), Species_Name != "") %>%
+#Two Copper Rockfish with UNKNOWN District - Assigned to Distrcit 2 because either Ventura or SB fish
+coop_fixed <- coop %>%
+  mutate(
+    CRFS_District = if_else(
+      Species_Name == "Copper Rockfish" & CRFS_District == "Unknown",
+      "District 2",   
+      CRFS_District
+    )
+  )
+species_counts <- coop_fixed %>%
+  filter(
+    !is.na(Species_Name),
+    Species_Name != "",
+    !is.na(CRFS_District),
+    CRFS_District != "UNKNOWN"
+  ) %>%
   group_by(Species_Name, CRFS_District) %>%
   summarise(n = n(), .groups = "drop")
 
-# Identify top 30 species
+# Identify top 20 species
 top_species <- species_counts %>%
   group_by(Species_Name) %>%
-  summarise(total_n = sum(n)) %>%
+  summarise(total_n = sum(n), .groups = "drop") %>%
   arrange(desc(total_n)) %>%
-  slice_head(n = 30) %>%
-  pull(Species_Name) %>%
-  as.character()
+  slice_head(n = 20) %>%
+  pull(Species_Name)
 
 # Recode other species as "Other Groundfish"
 species_counts <- species_counts %>%
-  mutate(Species_Name = ifelse(Species_Name %in% top_species, 
-                               as.character(Species_Name), "Other Groundfish"))
-
-# Re-aggregate after combining "Other Groundfish"
-species_counts <- species_counts %>%
+  mutate(
+    Species_Name = if_else(
+      Species_Name %in% top_species,
+      Species_Name,
+      "Other Groundfish"
+    )
+  ) %>%
   group_by(Species_Name, CRFS_District) %>%
   summarise(n = sum(n), .groups = "drop")
 
-# Set factor levels for Species_Name with Other Groundfish last
+
+# Re-aggregate after combining "Other Groundfish"
 species_order <- species_counts %>%
   filter(Species_Name != "Other Groundfish") %>%
   group_by(Species_Name) %>%
-  summarise(total_n = sum(n)) %>%
+  summarise(total_n = sum(n), .groups = "drop") %>%
   arrange(desc(total_n)) %>%
   pull(Species_Name)
 
-# Add "Other Groundfish" as the last level
-species_order <- c(species_order, "Other Groundfish")
-species_counts$Species_Name <- factor(species_counts$Species_Name, levels = species_order)
+species_counts <- species_counts %>%
+  mutate(
+    Species_Name = factor(
+      Species_Name,
+      levels = c(species_order, "Other Groundfish")
+    ),
+    CRFS_District = fct_drop(factor(CRFS_District))
+  )
+
 
 # Plot
-ggplot(species_counts, aes(x = Species_Name, y = n, fill = factor(CRFS_District))) +
+ggplot(species_counts,
+       aes(x = Species_Name, y = n, fill = CRFS_District)) +
   geom_bar(stat = "identity") +
-  scale_fill_viridis_d(option = "D", direction = -1) +
-  labs(x = "Species", y = "Number of Samples", fill = "CRFS District") +
+  scale_fill_viridis_d(option = "D", direction = -1, drop = TRUE) +
+  labs(
+    x = "Species",
+    y = "Count",
+    fill = "CRFS District"
+  ) +
   theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-  plot.margin = margin(t = 5, r = 5, b = 5, l = 27) 
-        )
+  theme(
+    panel.grid = element_blank(),   
+    axis.ticks = element_blank(), 
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.margin = margin(t = 5, r = 5, b = 5, l = 27)
+  )
 
 ```
 
@@ -498,6 +551,10 @@ plot_data <- coop %>%
   # Fill missing district/sex combinations per species (keeps empty facets)
   complete(Species_Name, CRFS_District, Sex, fill = list(Fork_Length_mm = NA))
 
+# Remove rows with missing district
+plot_data <- plot_data %>%
+  filter(!is.na(CRFS_District))
+
 # 3. Function to make one plot per species
 make_plot <- function(species_name) {
   ggplot(
@@ -515,7 +572,8 @@ make_plot <- function(species_name) {
          x = "Fork length (mm)",
          y = "Count",
          fill = "Sex") +
-    theme_minimal(base_size = 14)
+    theme_minimal(base_size = 14)+
+    theme(panel.grid = element_blank())
 }
 
 # 4. Create plots for top 5 species
@@ -532,5 +590,19 @@ pdf("Top5_Species_Length_Freq.pdf", width = 6, height = 12)  # increase height
 lapply(plots_list, print)
 dev.off()
 
+for (i in seq_along(plots_list)) {
+  species_name <- top5_species[i]
+  safe_name <- gsub("[^[:alnum:]]+", "_", species_name)  # replace non-alphanumeric with _
+  
+  ggsave(
+    filename = paste0(safe_name, "_ForkLength.jpg"),
+    plot = plots_list[[i]],
+    device = "jpeg",
+    width = 6,
+    height = 10,
+    units = "in",
+    dpi = 300
+  )
+}
 
 ```

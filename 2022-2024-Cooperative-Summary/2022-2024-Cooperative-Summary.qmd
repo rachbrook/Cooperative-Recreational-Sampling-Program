@@ -17,7 +17,7 @@ library(readxl)
 library(dplyr)
 library(googlesheets4)
 
-coop <- read_sheet("https://docs.google.com/spreadsheets/d/1_ydIN0FOKdNB5z35uV0qqcNfAGHdt1HGheUmDc5B1LI/edit?gid=1569662549#gid=1569662549", sheet = "Merged Data")
+coop <- read_sheet("https://docs.google.com/spreadsheets/d/1_ydIN0FOKdNB5z35uV0qqcNfAGHdt1HGheUmDc5B1LI/edit?gid=1622078476#gid=1622078476", sheet = "Merged Data")
 
 # Clean-up weird 'Capture_Date' formatting
 coop$Capture_Date <- sapply(coop$Capture_Date, function(x) {
@@ -53,7 +53,7 @@ coop <- coop %>%
   mutate(CRFS_District = case_when(
 
 #District 1 - South
-Vessel %in% c("Betty-O","New Del Mar","Eldorado","Amigo","(Newport) Patriot","Western Pride","Thunderbird","Fury","Sum Fun","Outer Limits","Premier" ) ~ "District 1 - South",
+Vessel %in% c("Betty-O","New Del Mar","Eldorado","Amigo","(Newport) Patriot","Western Pride","Thunderbird","Fury","Sum Fun","Outer Limits","Premier","Malihini" ) ~ "District 1 - South",
 
 # District 2 - Channel  
 Vessel %in% c("Endeavor","Island Spirit","Coral Sea","Stardust","Mirage") ~ "District 2 - Channel",
@@ -62,7 +62,7 @@ Vessel %in% c("Endeavor","Island Spirit","Coral Sea","Stardust","Mirage") ~ "Dis
 Vessel %in% c("Infinity","Legacy","Big Anchovy","Kahuna","Last Meal","The Marianne","Black Pearl","Fiesta","(Avila) Patriot") ~ "District 3 - Central",  
 
 # District 4 - San Francisco    
-Vessel %in% c("Dragonfly","Big Eye","New Sea Angler","Salty Lady","Lovely Martha","Sea Wolf","Queen of Hearts","New Captain Pete","Riptide") ~ "District 4 - San Francisco",
+Vessel %in% c("Dragonfly","Big Eye","Sorta Salty","New Sea Angler","Salty Lady","Lovely Martha","Sea Wolf","Queen of Hearts","New Captain Pete","Riptide") ~ "District 4 - San Francisco",
 
 # District 5 - Wine   
 Vessel %in% c("Sea Hawk","Saylor Ann","Kyndall Lynn","Telstar") ~ "District 5 - Wine",
@@ -86,7 +86,7 @@ coop$Species_Name <- recode_factor(coop$Species_Name,
 coop$Species_Name <- recode_factor(coop$Species_Name,
                                 'Vermilion Rockfish' = "Vermilion/Sunset Rockfish")
 
-#write.csv(Coop_Data, "coop-data.csv", row.names = FALSE)
+write.csv(coop, "coop-data.csv", row.names = FALSE)
 ```
 
 ## Summary of cooperative data by CRFS district
