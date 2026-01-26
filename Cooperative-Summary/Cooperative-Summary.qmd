@@ -277,6 +277,12 @@ district_table
 
 gtsave(district_table, "district_table.png")
 
+write.csv(
+  district_table,
+  "district_table.csv",
+  row.names = FALSE
+)
+
 ```
 
 ## Annual summary of cooperative data by species
@@ -315,7 +321,6 @@ species_summary_wide <- coop %>%
     Scientific_Name            # Alphabetical tie-breaker
   ) %>%
   select(-is_total)
-
 
 
 # Format table for manuscript
@@ -364,6 +369,12 @@ species_table <- species_summary_wide %>%
 
 # Save table
 gtsave(species_table, "species_table.png")
+
+write.csv(
+  species_summary_wide,
+  "species_table.csv",
+  row.names = FALSE
+)
 
 ```
 
@@ -438,6 +449,96 @@ species_by_district_table
 
 #gtsave(species_by_district_table, "species_by_district_table.png")
 
+
+
+write.csv(
+  species_by_district_wide,
+  "species_district_table.csv",
+  row.names = FALSE
+)
+
+```
+
+## Summary of species by district by year (Melissa)
+
+```{r}
+
+# Define districts and years
+ordered_districts <- c(
+  "District 1", "District 2", "District 3",
+  "District 4", "District 5", "District 6"
+)
+years <- 2022:2025
+
+# Build the wide summary
+species_summary_wide <- coop %>%
+  filter(!is.na(Species_Name), Species_Name != "") %>%
+  filter(Year %in% years) %>%
+  group_by(Species_Name, Scientific_Name, CRFS_District, Year) %>%
+  summarise(n_fish = n(), .groups = "drop") %>%
+  # Combine district and year into one column for pivoting
+  mutate(District_Year = paste(CRFS_District, Year, sep = "_")) %>%
+  select(-CRFS_District, -Year) %>%
+  pivot_wider(
+    names_from = District_Year,
+    values_from = n_fish,
+    values_fill = 0
+  ) %>%
+  # Optional: reorder columns so districts × years are in consistent order
+  {
+    district_year_cols <- as.vector(outer(ordered_districts, years, paste, sep = "_"))
+    select(., Species_Name, Scientific_Name, any_of(district_year_cols))
+  } %>%
+  # Add a total column per species
+  mutate(Total = rowSums(across(where(is.numeric)))) %>%
+  arrange(desc(Total), Scientific_Name)
+
+write.csv(
+  species_summary_wide,
+  "species_summary_one_row_per_species.csv",
+  row.names = FALSE
+)
+```
+
+## Summary of species by port by year (Melissa)
+
+```{r}
+
+# Define ports and years
+ordered_ports <- c(
+"Crescent City","Eureka","Shelter Cove","Fort Bragg","Bodega Bay","San Francisco","Sausalito","Emeryville","Pillar Point","Santa Cruz","Moss Landing","Morro Bay","Avila Beach","Santa Barbara","Ventura","Channel Islands","Marina Del Rey","Long Beach","San Pedro","Newport","Dana Point","Mission Bay","Seaforth","San Diego","UNKNOWN"
+)
+years <- 2022:2025
+
+# Build the wide summary by port
+species_summary_by_port <- coop %>%
+  filter(!is.na(Species_Name), Species_Name != "") %>%
+  filter(Year %in% years) %>%
+  group_by(Species_Name, Scientific_Name, Port, Year) %>%
+  summarise(n_fish = n(), .groups = "drop") %>%
+  # Combine port and year into one column for pivoting
+  mutate(Port_Year = paste(Port, Year, sep = "_")) %>%
+  select(-Port, -Year) %>%
+  pivot_wider(
+    names_from = Port_Year,
+    values_from = n_fish,
+    values_fill = 0
+  ) %>%
+  # Reorder columns so ports × years are in consistent order
+  {
+    port_year_cols <- as.vector(outer(ordered_ports, years, paste, sep = "_"))
+    select(., Species_Name, Scientific_Name, any_of(port_year_cols))
+  } %>%
+  # Add a total column per species
+  mutate(Total = rowSums(across(where(is.numeric)))) %>%
+  arrange(desc(Total), Scientific_Name)
+
+# Save as CSV
+write.csv(
+  species_summary_by_port,
+  "species_summary_by_port_one_row_per_species.csv",
+  row.names = FALSE
+)
 ```
 
 ## Stacked bar plot
